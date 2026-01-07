@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
       define: {
         // Expose env vars to the app (only VITE_ prefixed ones are auto-exposed)
         'import.meta.env.VITE_GEMINI_API_KEY': JSON.stringify(env.VITE_GEMINI_API_KEY),
-        'import.meta.env.VITE_AWS_BEDROCK_API_KEY': JSON.stringify(env.VITE_AWS_BEDROCK_API_KEY),
+        'import.meta.env.VITE_ANTHROPIC_API_KEY': JSON.stringify(env.VITE_ANTHROPIC_API_KEY),
         'import.meta.env.VITE_AWS_BEDROCK_REGION': JSON.stringify(env.VITE_AWS_BEDROCK_REGION || 'us-east-1'),
       }
     };

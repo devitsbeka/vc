@@ -3,7 +3,7 @@ import { CLITool, sidecarManager } from './sidecar';
 import { sendMessageToGemini } from './gemini';
 import { ClaudeProvider } from '../types';
 import { isWebMode, getInvoke, getListen } from './webCompat';
-import { sendToClaudeBedrock, isBedrockConfigured } from './bedrockClient';
+import { sendToClaudeAnthropic, isAnthropicConfigured } from './anthropicClient';
 
 interface CLIMessage {
   role: 'user' | 'assistant';
@@ -793,32 +793,56 @@ User request: `;
   }
 
   /**
-   * Claude Web Mode - Falls back to Gemini since AWS Bedrock doesn't support browser CORS
+   * Claude Web Mode - Uses Anthropic API directly (supports browser CORS)
    */
   private async sendToClaudeWeb(
     message: string,
     history: CLIMessage[]
   ): Promise<CLIResponse> {
-    console.log('[Claude Web] Web mode detected - using Gemini as backend (Bedrock has CORS restrictions)');
+    if (!isAnthropicConfigured()) {
+      // Fallback to Gemini if no Anthropic key
+      console.log('[Claude Web] No Anthropic key, falling back to Gemini');
+      if (this.progressCallback) {
+        this.progressCallback('🔄 Using Gemini (no Anthropic API key configured)...');
+      }
+      return this.sendToGeminiCLI(message, history);
+    }
 
-    // Notify user about the fallback
+    console.log('[Claude Web] Sending message via Anthropic API');
+
     if (this.progressCallback) {
-      this.progressCallback('🔄 Web mode: Using Gemini API (Bedrock requires desktop app for direct access)...');
+      this.progressCallback('🔄 Sending request to Claude...');
     }
 
     try {
-      // Use Gemini as the backend for Claude in web mode
-      // This provides the same code generation capabilities
-      const response = await this.sendToGeminiCLI(message, history);
+      // Prepend app context to the message
+      const enhancedMessage = this.getAppContextPrompt() + message;
 
-      if (this.progressCallback) {
-        this.progressCallback('✅ Response received (via Gemini backend)');
+      // Convert history format
+      const anthropicHistory = history.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content
+      }));
+
+      const response = await sendToClaudeAnthropic(enhancedMessage, anthropicHistory);
+
+      // Update session stats
+      if (response.usage) {
+        this.sessionStats.totalTokens += (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0);
+        this.sessionStats.totalTurns += 1;
       }
 
-      return response;
+      if (this.progressCallback) {
+        this.progressCallback('✅ Response received from Claude');
+      }
+
+      return {
+        content: response.content,
+        code: this.extractCode(response.content)
+      };
     } catch (error) {
-      console.error('[Claude Web] Gemini fallback error:', error);
-      throw new Error(`Claude (web mode) error: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('[Claude Web] Error:', error);
+      throw new Error(`Claude error: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
