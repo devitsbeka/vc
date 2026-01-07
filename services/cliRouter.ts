@@ -793,52 +793,32 @@ User request: `;
   }
 
   /**
-   * Claude Web Mode - Uses AWS Bedrock API directly
+   * Claude Web Mode - Falls back to Gemini since AWS Bedrock doesn't support browser CORS
    */
   private async sendToClaudeWeb(
     message: string,
     history: CLIMessage[]
   ): Promise<CLIResponse> {
-    if (!isBedrockConfigured()) {
-      throw new Error('AWS Bedrock credentials not configured. Please set VITE_AWS_ACCESS_KEY_ID and VITE_AWS_SECRET_ACCESS_KEY in your .env.local file.');
-    }
+    console.log('[Claude Web] Web mode detected - using Gemini as backend (Bedrock has CORS restrictions)');
 
-    console.log('[Claude Web] Sending message via Bedrock:', message.substring(0, 100));
-
-    // Notify progress
+    // Notify user about the fallback
     if (this.progressCallback) {
-      this.progressCallback('🔄 Sending request to Claude via AWS Bedrock...');
+      this.progressCallback('🔄 Web mode: Using Gemini API (Bedrock requires desktop app for direct access)...');
     }
 
     try {
-      // Prepend app context to the message
-      const enhancedMessage = this.getAppContextPrompt() + message;
-
-      // Convert history format
-      const bedrockHistory = history.map(m => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content
-      }));
-
-      const response = await sendToClaudeBedrock(enhancedMessage, bedrockHistory);
-
-      // Update session stats
-      if (response.usage) {
-        this.sessionStats.totalTokens += (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0);
-        this.sessionStats.totalTurns += 1;
-      }
+      // Use Gemini as the backend for Claude in web mode
+      // This provides the same code generation capabilities
+      const response = await this.sendToGeminiCLI(message, history);
 
       if (this.progressCallback) {
-        this.progressCallback('✅ Response received from Claude');
+        this.progressCallback('✅ Response received (via Gemini backend)');
       }
 
-      return {
-        content: response.content,
-        code: this.extractCode(response.content)
-      };
+      return response;
     } catch (error) {
-      console.error('[Claude Web] Error:', error);
-      throw new Error(`Claude (Bedrock) error: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('[Claude Web] Gemini fallback error:', error);
+      throw new Error(`Claude (web mode) error: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
