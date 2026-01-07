@@ -1,8 +1,9 @@
 // services/cliRouter.ts
-import { Command } from '@tauri-apps/plugin-shell';
 import { CLITool, sidecarManager } from './sidecar';
 import { sendMessageToGemini } from './gemini';
 import { ClaudeProvider } from '../types';
+import { isWebMode, getInvoke, getListen } from './webCompat';
+import { sendToClaudeBedrock, isBedrockConfigured } from './bedrockClient';
 
 interface CLIMessage {
   role: 'user' | 'assistant';
@@ -570,11 +571,17 @@ User request: `;
 
   /**
    * Claude Code CLI 集成（使用 Tauri 后端的流式处理）
+   * In web mode, uses AWS Bedrock API directly
    */
   private async sendToClaudeCLI(
     message: string,
     history: CLIMessage[]
   ): Promise<CLIResponse> {
+    // Web mode: Use Bedrock API directly
+    if (isWebMode()) {
+      return this.sendToClaudeWeb(message, history);
+    }
+
     try {
       const nodePath = await sidecarManager.getNodePath();
       const claudePath = await sidecarManager.getClaudePath();
@@ -786,6 +793,56 @@ User request: `;
   }
 
   /**
+   * Claude Web Mode - Uses AWS Bedrock API directly
+   */
+  private async sendToClaudeWeb(
+    message: string,
+    history: CLIMessage[]
+  ): Promise<CLIResponse> {
+    if (!isBedrockConfigured()) {
+      throw new Error('AWS Bedrock credentials not configured. Please set VITE_AWS_ACCESS_KEY_ID and VITE_AWS_SECRET_ACCESS_KEY in your .env.local file.');
+    }
+
+    console.log('[Claude Web] Sending message via Bedrock:', message.substring(0, 100));
+
+    // Notify progress
+    if (this.progressCallback) {
+      this.progressCallback('🔄 Sending request to Claude via AWS Bedrock...');
+    }
+
+    try {
+      // Prepend app context to the message
+      const enhancedMessage = this.getAppContextPrompt() + message;
+
+      // Convert history format
+      const bedrockHistory = history.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content
+      }));
+
+      const response = await sendToClaudeBedrock(enhancedMessage, bedrockHistory);
+
+      // Update session stats
+      if (response.usage) {
+        this.sessionStats.totalTokens += (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0);
+        this.sessionStats.totalTurns += 1;
+      }
+
+      if (this.progressCallback) {
+        this.progressCallback('✅ Response received from Claude');
+      }
+
+      return {
+        content: response.content,
+        code: this.extractCode(response.content)
+      };
+    } catch (error) {
+      console.error('[Claude Web] Error:', error);
+      throw new Error(`Claude (Bedrock) error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
    * Gemini CLI 集成（使用现有 API）
    */
   private async sendToGeminiCLI(
@@ -813,6 +870,9 @@ User request: `;
     message: string,
     history: CLIMessage[]
   ): Promise<CLIResponse> {
+    if (isWebMode()) {
+      throw new Error('Codex is not available in web mode. Please use Claude or Gemini.');
+    }
     throw new Error('Codex CLI not implemented yet');
   }
 
@@ -836,6 +896,11 @@ User request: `;
     message: string,
     history: CLIMessage[]
   ): Promise<CLIResponse> {
+    // Web mode: Kiro requires CLI
+    if (isWebMode()) {
+      throw new Error('Kiro is not available in web mode. Please use Claude or Gemini.');
+    }
+
     try {
       // 动态导入 Tauri API
       const { invoke } = await import('@tauri-apps/api/core');

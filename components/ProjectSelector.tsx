@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { isWebMode, getDialogOpen } from '../services/webCompat';
 
 interface ProjectSelectorProps {
   onProjectSelect: (path: string) => void;
@@ -7,10 +7,13 @@ interface ProjectSelectorProps {
 
 const ProjectSelector: React.FC<ProjectSelectorProps> = ({ onProjectSelect }) => {
   const [isSelecting, setIsSelecting] = useState(false);
+  const [projectName, setProjectName] = useState('');
+  const [showWebInput, setShowWebInput] = useState(false);
 
   const handleSelectDirectory = async () => {
     setIsSelecting(true);
     try {
+      const open = await getDialogOpen();
       const selected = await open({
         directory: true,
         multiple: false,
@@ -19,13 +22,27 @@ const ProjectSelector: React.FC<ProjectSelectorProps> = ({ onProjectSelect }) =>
 
       if (selected && typeof selected === 'string') {
         onProjectSelect(selected);
+      } else if (isWebMode()) {
+        // In web mode, if no folder was selected, show input
+        setShowWebInput(true);
       }
     } catch (error) {
       console.error('Error selecting directory:', error);
-      alert('Failed to select directory. Please try again.');
+      if (isWebMode()) {
+        // In web mode, fall back to text input
+        setShowWebInput(true);
+      } else {
+        alert('Failed to select directory. Please try again.');
+      }
     } finally {
       setIsSelecting(false);
     }
+  };
+
+  const handleWebProjectSubmit = () => {
+    const name = projectName.trim() || 'my-project';
+    // In web mode, we use a virtual project path
+    onProjectSelect(`/web-projects/${name}`);
   };
 
   return (
@@ -52,38 +69,76 @@ const ProjectSelector: React.FC<ProjectSelectorProps> = ({ onProjectSelect }) =>
           {/* Description */}
           <div className="bg-ide-bg rounded-md p-4 mb-6">
             <p className="text-sm text-ide-textLight mb-2">
-              To get started, select a project directory where all generated files will be saved.
+              {isWebMode() 
+                ? 'Enter a project name to get started with AI-powered code generation.'
+                : 'To get started, select a project directory where all generated files will be saved.'}
             </p>
-            <ul className="text-xs text-ide-textLight space-y-1 list-disc list-inside">
-              <li>Choose an empty directory for a new project</li>
-              <li>Or select an existing project to continue</li>
-              <li>All CLI-generated files will be stored here</li>
-            </ul>
+            {!isWebMode() && (
+              <ul className="text-xs text-ide-textLight space-y-1 list-disc list-inside">
+                <li>Choose an empty directory for a new project</li>
+                <li>Or select an existing project to continue</li>
+                <li>All CLI-generated files will be stored here</li>
+              </ul>
+            )}
+            {isWebMode() && (
+              <p className="text-xs text-ide-textLight mt-2">
+                🌐 Running in web mode - AI features available, file system limited
+              </p>
+            )}
           </div>
 
-          {/* Open Button */}
-          <button
-            onClick={handleSelectDirectory}
-            disabled={isSelecting}
-            className="w-full bg-ide-accent hover:bg-ide-accent/90 text-white font-medium py-3 px-4 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {isSelecting ? (
-              <>
-                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Selecting...
-              </>
-            ) : (
-              <>
+          {/* Web Mode Project Input */}
+          {(isWebMode() || showWebInput) && (
+            <div className="mb-4">
+              <input
+                type="text"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="Enter project name..."
+                className="w-full bg-ide-bg border border-ide-border rounded-md px-4 py-2 text-ide-text placeholder-ide-textLight focus:outline-none focus:ring-2 focus:ring-ide-accent"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleWebProjectSubmit();
+                  }
+                }}
+              />
+              <button
+                onClick={handleWebProjectSubmit}
+                className="w-full mt-2 bg-ide-accent hover:bg-ide-accent/90 text-white font-medium py-3 px-4 rounded-md transition-colors flex items-center justify-center gap-2"
+              >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                 </svg>
-                Open Project
-              </>
-            )}
-          </button>
+                Create Project
+              </button>
+            </div>
+          )}
+
+          {/* Open Button (non-web mode) */}
+          {!isWebMode() && !showWebInput && (
+            <button
+              onClick={handleSelectDirectory}
+              disabled={isSelecting}
+              className="w-full bg-ide-accent hover:bg-ide-accent/90 text-white font-medium py-3 px-4 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isSelecting ? (
+                <>
+                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Selecting...
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                  </svg>
+                  Open Project
+                </>
+              )}
+            </button>
+          )}
 
           {/* Recent Projects (placeholder for future) */}
           <div className="mt-6 pt-6 border-t border-ide-border">

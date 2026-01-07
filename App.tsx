@@ -30,7 +30,7 @@ import {
   getTaskElapsedTime,
   syncTaskToFile
 } from './services/taskStore';
-import { listen } from '@tauri-apps/api/event';
+import { isWebMode, getListen } from './services/webCompat';
 
 const App: React.FC = () => {
   // Project directory state
@@ -369,23 +369,28 @@ const App: React.FC = () => {
     // Browser beforeunload event
     window.addEventListener('beforeunload', handleBeforeUnload);
 
-    // Tauri window close event - more reliable in Tauri
+    // Tauri window close event - more reliable in Tauri (skip in web mode)
     let unlistenClose: (() => void) | null = null;
-    listen('tauri://close-requested', () => {
-      console.log('[App] Tauri close-requested - saving sessions');
-      saveSessionsImmediate(toolHistoryRef.current);
-    }).then(unlisten => {
-      unlistenClose = unlisten;
-    });
-
-    // Also listen for destroy event
     let unlistenDestroy: (() => void) | null = null;
-    listen('tauri://destroyed', () => {
-      console.log('[App] Tauri destroyed - saving sessions');
-      saveSessionsImmediate(toolHistoryRef.current);
-    }).then(unlisten => {
-      unlistenDestroy = unlisten;
-    });
+
+    if (!isWebMode()) {
+      getListen().then(listen => {
+        listen('tauri://close-requested', () => {
+          console.log('[App] Tauri close-requested - saving sessions');
+          saveSessionsImmediate(toolHistoryRef.current);
+        }).then(unlisten => {
+          unlistenClose = unlisten;
+        });
+
+        // Also listen for destroy event
+        listen('tauri://destroyed', () => {
+          console.log('[App] Tauri destroyed - saving sessions');
+          saveSessionsImmediate(toolHistoryRef.current);
+        }).then(unlisten => {
+          unlistenDestroy = unlisten;
+        });
+      });
+    }
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -431,12 +436,19 @@ const App: React.FC = () => {
 
   // Listen for terminal output - auto-switch to terminal tab when output arrives
   // Note: XTerminal component in WorkspacePanel handles the actual output display
+  // Skip in web mode (terminals not supported)
   useEffect(() => {
+    // Skip terminal listener in web mode
+    if (isWebMode()) {
+      console.log('[App] Web mode - skipping terminal listener');
+      return;
+    }
+
     let unlisten: (() => void) | null = null;
     let cancelled = false;
 
     const setupTerminalListener = async () => {
-      const { listen } = await import('@tauri-apps/api/event');
+      const listen = await getListen();
       const listener = await listen<{ terminalId: string; output: string }>('terminal-output', (event) => {
         const { terminalId } = event.payload;
 
@@ -497,9 +509,13 @@ const App: React.FC = () => {
     terminalsRef.current = terminals;
   }, [terminals]);
 
-  // Cleanup on unmount only - close all terminals properly
+  // Cleanup on unmount only - close all terminals properly (skip in web mode)
   useEffect(() => {
     return () => {
+      if (isWebMode()) {
+        console.log('[App] Web mode - skipping terminal cleanup');
+        return;
+      }
       sidecarManager.stopAll();
       // Close all terminal sessions (PTY terminals use close_terminal, not kill_process)
       terminalsRef.current.forEach(async (terminal) => {
@@ -567,6 +583,19 @@ const App: React.FC = () => {
   };
 
   const createInteractiveTerminal = async () => {
+    // Web mode: Terminal not supported
+    if (isWebMode()) {
+      console.log('[Terminal] Web mode - terminal creation not supported');
+      // Show a message to the user
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        text: '⚠️ **Terminal is not available in web mode.** To use the integrated terminal, please run VoltCode as a desktop app.',
+        sender: Sender.AGENT,
+        timestamp: Date.now()
+      }]);
+      return;
+    }
+
     try {
       const { invoke } = await import('@tauri-apps/api/core');
 
