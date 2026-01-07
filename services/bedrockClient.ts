@@ -6,14 +6,17 @@
  */
 
 // AWS Credentials from environment
+// Note: Bedrock is only available in specific regions (us-east-1, us-west-2, eu-west-1, etc.)
+// eu-north-1 does NOT support Bedrock, so we default to us-east-1
 const getCredentials = () => ({
   accessKeyId: import.meta.env.VITE_AWS_ACCESS_KEY_ID || '',
   secretAccessKey: import.meta.env.VITE_AWS_SECRET_ACCESS_KEY || '',
-  region: import.meta.env.VITE_AWS_REGION || 'eu-north-1',
+  region: import.meta.env.VITE_AWS_BEDROCK_REGION || 'us-east-1', // Bedrock-specific region
 });
 
 // Claude model ID for Bedrock
-const CLAUDE_MODEL_ID = 'anthropic.claude-3-sonnet-20240229-v1:0';
+// Use Claude 3 Haiku for faster responses, or Sonnet for better quality
+const CLAUDE_MODEL_ID = 'anthropic.claude-3-haiku-20240307-v1:0';
 
 /**
  * AWS Signature V4 signing implementation for browser
@@ -181,6 +184,18 @@ export async function sendToClaudeBedrock(
     if (!response.ok) {
       const errorText = await response.text();
       console.error('[Bedrock] API Error:', response.status, errorText);
+      
+      // Provide helpful error messages
+      if (response.status === 403) {
+        if (errorText.includes('scoped to correct service')) {
+          throw new Error(`AWS Bedrock access denied. Please ensure:\n1. Your IAM user has bedrock:InvokeModel permission\n2. Claude models are enabled in AWS Bedrock console (${region})\n3. Go to: https://console.aws.amazon.com/bedrock/home?region=${region}#/modelaccess`);
+        }
+        throw new Error(`AWS Bedrock access denied (403). Check IAM permissions for bedrock:InvokeModel.`);
+      }
+      if (response.status === 404) {
+        throw new Error(`Claude model not found. Enable Claude in AWS Bedrock console: https://console.aws.amazon.com/bedrock/home?region=${region}#/modelaccess`);
+      }
+      
       throw new Error(`Bedrock API error: ${response.status} - ${errorText}`);
     }
     
